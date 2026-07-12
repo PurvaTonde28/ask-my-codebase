@@ -12,10 +12,7 @@ class FileRecord:
     content: str
     size: int
 
-def walk_repository(
-        repo_path: Path,
-        extensions: set[str] | None = None
-) -> list[FileRecord]:
+def walk_repository(  repo_path: Path, extensions: set[str] | None = None ) -> list[FileRecord]:
     """
     Walk a repository recursively and return readable text files.
     Args:
@@ -34,22 +31,22 @@ def walk_repository(
                       ".yml",
                       ".toml",}
 
-    ignored_dirs = {
-        ".git",
-        "__pycache__",
-        "venv",
-        ".venv",
-        "node_modules",
-        ".mypy_cache",
-        "build",
-        "dist",
-        ".idea",
-        ".vscode",
-    }
+    ignored_dirs = { ".git",
+                    "__pycache__",
+                    "venv",
+                    ".venv",
+                    "node_modules",
+                    ".mypy_cache",
+                    "build",
+                    "dist",
+                    ".idea",
+                    ".vscode", }
+    
     # empty list to store every file
     records: list[FileRecord] = []
+    
     for root, dirs, files in os.walk(repo_path):
-        # Don't even enter ignored directories
+        # this tells , Don't even enter ignored directories
         dirs[:] = [d for d in dirs if d not in ignored_dirs]
 
         for file in files:
