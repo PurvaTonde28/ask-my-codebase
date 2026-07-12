@@ -4,7 +4,6 @@ import os
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 ALLOWED_FILENAMES = {"README", "LICENSE", "Dockerfile", "Makefile"}
 
-
 @dataclass
 class FileRecord:
     path: Path
