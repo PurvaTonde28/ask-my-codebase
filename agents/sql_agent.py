@@ -34,6 +34,16 @@ file_changes(
     deletions INTEGER
 )
 
+IMPORTANT: file_path stores the FULL path relative to the repo root
+(e.g. "fastapi/routing.py", "docs/en/docs/tutorial/dependencies/index.md"),
+never just a bare filename. Users will typically ask about files by their
+short name only (e.g. "routing.py"). When filtering by filename, use
+LIKE '%filename%' instead of exact equality (=), or your query will
+silently match zero rows even though the file has real history.
+
+Example: for "how many commits touched routing.py", write
+WHERE file_path LIKE '%routing.py' -- NOT WHERE file_path = 'routing.py'
+
 Rules:
 - Only generate SELECT queries.
 - Never modify the database.
@@ -42,7 +52,6 @@ Rules:
 - Summarize the results in plain English.
 - Do not dump raw SQL rows unless the user explicitly asks.
 """
-
 
 @tool
 def run_sql_query(query: str) -> str:
