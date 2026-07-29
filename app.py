@@ -1,160 +1,142 @@
-"""
-Ask My Codebase -- CLI entry point.
-
-First run: clones the target repo, splits code + docs, builds the FAISS
-index and commit-history database (one-time setup, several minutes on CPU).
-Every run after that: skips straight to the question loop.
-"""
 from pathlib import Path
+import sqlite3
+import time
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown
+from langchain.agents import create_agent
+from langchain.tools import tool
+from langchain_core.messages import BaseMessage
+from langchain_groq import ChatGroq
+from groq import BadRequestError as GroqBadRequestError
 
-from ingestion.clone_repo import clone_repository
-from ingestion.read_files import walk_repository
-from ingestion.parse_git_log import build_commit_database
-from splitters.python_code_splitter import split_python_file
-from splitters.text_structure_splitter import split_markdown_file
-from vectorstore.build_index import build_index
+from agents.memory import trim_history
 
-console = Console()
+# Must match wherever Phase 6's build_commit_database() actually wrote the
+# database. Getting this wrong doesn't raise a clean error -- sqlite3.connect()
+# silently creates an empty db at a bad path, and every query then fails with
+# a misleading "no such table" error that looks like a bad-SQL mistake, not a
+# wrong-path mistake. Double check this against your real Phase 6 output path.
+DATABASE_PATH = "data/commits.db"
 
-DEFAULT_REPO_URL = "https://github.com/tiangolo/fastapi"
-DB_PATH = "data/commits.db"
-INDEX_DIR = "vectorstore/data"
+SYSTEM_PROMPT = """
+You are an SQL assistant.
 
+The database has two tables.
 
-def is_non_english_doc(path: Path) -> bool:
-    """Skip translated docs (docs/<lang>/docs/...), keep docs/en/... and
-    anything not under docs/ at all (like the root README)."""
-    parts = path.parts
-    if "docs" in parts:
-        idx = parts.index("docs")
-        if idx + 1 < len(parts):
-            candidate = parts[idx + 1]
-            if candidate != "en":
-                return True
-    return False
+commits(
+    hash TEXT PRIMARY KEY,
+    author TEXT,
+    email TEXT,
+    date TEXT,
+    message TEXT
+)
 
+file_changes(
+    hash TEXT,
+    file_path TEXT,
+    insertions INTEGER,
+    deletions INTEGER
+)
 
-def run_ingestion(repo_url: str) -> Path:
-    """Full pipeline: clone -> walk -> split -> embed -> build SQL db.
-    Every step here reuses an already-tested function from an earlier
-    phase -- this function only orchestrates, it doesn't parse or embed
-    anything itself."""
-    console.print(
-        Panel(
-            "Setting up for the first time: cloning the repo, splitting code "
-            "and docs, building embeddings and the commit-history database.\n"
-            "This can take several minutes on CPU -- it only happens once.",
-            title="First-time setup",
-            style="yellow",
+IMPORTANT: file_path stores the FULL path relative to the repo root
+(e.g. "fastapi/routing.py", "docs/en/docs/tutorial/dependencies/index.md"),
+never just a bare filename. Users will typically ask about files by their
+short name only (e.g. "routing.py"). When filtering by filename, use
+LIKE '%filename%' instead of exact equality (=), or your query will
+silently match zero rows even though the file has real history.
+
+Example: for "how many commits touched routing.py", write
+WHERE file_path LIKE '%routing.py' -- NOT WHERE file_path = 'routing.py'
+
+Rules:
+- Only generate SELECT queries.
+- Never modify the database.
+- Use the run_sql_query tool.
+- If the tool returns an SQL error, fix your query and try again.
+- Summarize the results in plain English.
+- Do not dump raw SQL rows unless the user explicitly asks.
+- You may see earlier turns of this conversation before the latest question.
+  Use them to resolve references like "that file", "those commits", or "the
+  same author" -- but still run a fresh query for the CURRENT question. The
+  earlier answer's query results are not repeated in what you see now.
+"""
+
+@tool
+def run_sql_query(query: str) -> str:
+    """Run a read-only SQL SELECT query against the commit history database
+    (commits, file_changes tables) and return up to 50 result rows as text."""
+    query = query.strip()
+
+    if not query.lower().startswith("select"):
+        return "Only SELECT queries are allowed."
+
+    if not Path(DATABASE_PATH).exists():
+        return (
+            f"Database not found at '{DATABASE_PATH}'. "
+            "Run build_commit_database() first, or check DATABASE_PATH is correct."
         )
-    )
 
-    repo_path = clone_repository(repo_url)
-    console.print(f"[dim]Cloned to {repo_path}[/dim]")
+    connection = sqlite3.connect(DATABASE_PATH)
+    cursor = connection.cursor()
 
-    records = walk_repository(repo_path)
-    py_records = [r for r in records if r.extension == ".py"]
-    md_records = [r for r in records if r.extension in (".md", ".rst", ".txt")]
-    md_records = [r for r in md_records if not is_non_english_doc(r.path)]
+    try:
+        cursor.execute(query)
+        rows = cursor.fetchmany(50)
+        if not rows:
+            return "Query returned no rows."
+        return "\n".join(str(row) for row in rows)
 
-    code_chunks = []
-    for r in py_records:
-        code_chunks.extend(split_python_file(r))
+    except sqlite3.Error as e:
+        return f"SQL Error: {e}"
 
-    text_chunks = []
-    for r in md_records:
-        text_chunks.extend(split_markdown_file(r))
-
-    console.print(f"[dim]{len(code_chunks)} code chunks, {len(text_chunks)} text chunks[/dim]")
-
-    build_index(
-        code_chunks,
-        text_chunks,
-        output_dir=INDEX_DIR,
-        cooldown_every=1000,
-        cooldown_seconds=5.0,
-    )
-    build_commit_database(repo_path, DB_PATH)
-
-    console.print("[green]Setup complete.[/green]")
-    return repo_path
+    finally:
+        connection.close()
 
 
-def ensure_ingested(repo_url: str) -> None:
-    """Only run the (slow, one-time) ingestion pipeline if the outputs
-    don't already exist on disk. Safe to call on every launch."""
-    index_file = Path(INDEX_DIR) / "index.faiss"
-    db_file = Path(DB_PATH)
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    temperature=0,
+)
 
-    if index_file.exists() and db_file.exists():
-        console.print("[dim]Existing index and commit database found -- skipping setup.[/dim]")
-        return
-
-    run_ingestion(repo_url)
-
-
-def print_welcome() -> None:
-    welcome_text = (
-        "[bold]Ask My Codebase[/bold]\n\n"
-        "A multi-agent assistant that answers questions about a codebase by "
-        "routing to either a RAG agent (code & docs) or a SQL agent (commit history).\n\n"
-        "Try asking:\n"
-        "  - how does dependency injection work\n"
-        "  - how many commits touched routing.py\n"
-        "  - explain the routing decorator\n\n"
-        "Type 'exit' to quit."
-    )
-    console.print(Panel(welcome_text, title="Welcome", border_style="cyan"))
+sql_agent = create_agent(
+    model=llm,
+    tools=[run_sql_query],
+    system_prompt=SYSTEM_PROMPT,
+)
 
 
-def print_answer(state: dict) -> None:
-    route = state["route"].destination
-    reasoning = state["route"].reasoning
-    answer = state["final_answer"]
+def sql_node(messages: list[BaseMessage], max_retries: int = 2) -> str:
+    """
+    Entry point for the SQL agent.
+    Called by sql_graph_node() in graph.py.
 
-    route_style = "cyan" if route == "rag" else "yellow"
-    console.print(f"[{route_style}]routed to: {route}[/{route_style}] [dim]({reasoning})[/dim]")
-    console.print(Panel(Markdown(answer), border_style=route_style))
+    `messages` is the full running conversation (prior turns + the current
+    question as the last HumanMessage), built from GraphState["messages"].
+    Trimmed here before being sent to the agent for the same reason as
+    rag_node(): bounded token usage on a long session.
 
+    Retries on groq.BadRequestError: Groq's Llama models occasionally emit
+    malformed tool-call syntax (e.g. literal "<function=...>" text instead of
+    a proper structured tool call), especially on unusual/complex questions.
+    This is a known model-level flakiness, not something a fixed prompt
+    reliably prevents -- retrying the same call is the practical fix. Same
+    pattern as rag_node(), since both agents share this same exposure.
+    """
+    last_error = None
+    trimmed_messages = trim_history(messages)
 
-def main() -> None:
-    ensure_ingested(DEFAULT_REPO_URL)
-
-    # Imported here, not at module top-level: agents/rag_agent.py calls
-    # load_index() at ITS import time, which would crash with
-    # FileNotFoundError if the index doesn't exist yet. Importing graph only
-    # after ensure_ingested() guarantees the index is already built by the
-    # time this import (and rag_agent's load_index call inside it) runs.
-    from agents.graph import graph
-
-    print_welcome()
-
-    while True:
+    for attempt in range(max_retries + 1):
         try:
-            question = console.input("\n[bold]>[/bold] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Goodbye.[/dim]")
-            break
+            response = sql_agent.invoke({"messages": trimmed_messages})
+            return response["messages"][-1].content
 
-        if not question:
-            continue
-        if question.lower() in {"exit", "quit"}:
-            console.print("[dim]Goodbye.[/dim]")
-            break
+        except GroqBadRequestError as e:
+            last_error = e
+            if attempt < max_retries:
+                time.sleep(1)
+                continue
 
-        try:
-            state = graph.invoke({"question": question})
-            print_answer(state)
-        except KeyboardInterrupt:
-            console.print("\n[dim]Goodbye.[/dim]")
-            break
-        except Exception as e:
-            console.print(f"[red]Something went wrong: {e}[/red]")
-
-
-if __name__ == "__main__":
-    main()
+    return (
+        f"I ran into a temporary error generating a response after "
+        f"{max_retries + 1} attempts. Please try rephrasing your question. "
+        f"(details: {last_error})"
+    )
