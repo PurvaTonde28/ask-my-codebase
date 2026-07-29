@@ -227,7 +227,18 @@ def load_index(output_dir: str | Path = "vectorstore") -> None:
         _metadata = pickle.load(f)
 
 
-def search(query: str, k: int = 5) -> list[dict]:
+def _is_near_duplicate(a: str, b: str) -> bool:
+    """True if one chunk's text is fully contained in the other (or
+    identical). Cheap containment check -- catches e.g. a chunk that still
+    substantially overlaps another already-picked result, without the cost
+    of a real similarity model."""
+    if not a or not b:
+        return False
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return shorter in longer
+
+
+def search(query: str, k: int = 5, fetch_multiplier: int = 4) -> list[dict]:
     if _index is None or _metadata is None:
         raise RuntimeError("No index loaded. Call build_index() or load_index() first.")
 
@@ -235,10 +246,24 @@ def search(query: str, k: int = 5) -> list[dict]:
     query_vector = np.array(list(model.embed([query])), dtype=np.float32)
     faiss.normalize_L2(query_vector)
 
-    distances, indices = _index.search(query_vector, k)
+    # Over-fetch, then drop near-duplicates below -- otherwise two
+    # near-identical chunks (e.g. heavily overlapping content) can both
+    # land in the top k, crowding out a genuinely different result.
+    fetch_k = min(k * fetch_multiplier, len(_metadata))
+    distances, indices = _index.search(query_vector, fetch_k)
 
     results = []
     for idx in indices[0]:
-        if idx != -1:
-            results.append(_metadata[idx])
+        if idx == -1:
+            continue
+        candidate = _metadata[idx]
+        candidate_text = candidate["content"].strip()
+
+        if any(_is_near_duplicate(candidate_text, r["content"].strip()) for r in results):
+            continue
+
+        results.append(candidate)
+        if len(results) == k:
+            break
+
     return results
