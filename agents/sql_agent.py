@@ -4,8 +4,11 @@ import time
 
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.messages import BaseMessage
 from langchain_groq import ChatGroq
 from groq import BadRequestError as GroqBadRequestError
+
+from agents.memory import trim_history
 
 # Must match wherever Phase 6's build_commit_database() actually wrote the
 # database. Getting this wrong doesn't raise a clean error -- sqlite3.connect()
@@ -51,6 +54,10 @@ Rules:
 - If the tool returns an SQL error, fix your query and try again.
 - Summarize the results in plain English.
 - Do not dump raw SQL rows unless the user explicitly asks.
+- You may see earlier turns of this conversation before the latest question.
+  Use them to resolve references like "that file", "those commits", or "the
+  same author" -- but still run a fresh query for the CURRENT question. The
+  earlier answer's query results are not repeated in what you see now.
 """
 
 @tool
@@ -97,10 +104,15 @@ sql_agent = create_agent(
 )
 
 
-def sql_node(question: str, max_retries: int = 2) -> str:
+def sql_node(messages: list[BaseMessage], max_retries: int = 2) -> str:
     """
     Entry point for the SQL agent.
-    This will later be called by the LangGraph supervisor.
+    Called by sql_graph_node() in graph.py.
+
+    `messages` is the full running conversation (prior turns + the current
+    question as the last HumanMessage), built from GraphState["messages"].
+    Trimmed here before being sent to the agent for the same reason as
+    rag_node(): bounded token usage on a long session.
 
     Retries on groq.BadRequestError: Groq's Llama models occasionally emit
     malformed tool-call syntax (e.g. literal "<function=...>" text instead of
@@ -110,19 +122,11 @@ def sql_node(question: str, max_retries: int = 2) -> str:
     pattern as rag_node(), since both agents share this same exposure.
     """
     last_error = None
+    trimmed_messages = trim_history(messages)
 
     for attempt in range(max_retries + 1):
         try:
-            response = sql_agent.invoke(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": question,
-                        }
-                    ]
-                }
-            )
+            response = sql_agent.invoke({"messages": trimmed_messages})
             return response["messages"][-1].content
 
         except GroqBadRequestError as e:
