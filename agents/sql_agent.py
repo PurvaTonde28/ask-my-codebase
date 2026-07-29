@@ -75,7 +75,11 @@ def run_sql_query(query: str) -> str:
             "Run build_commit_database() first, or check DATABASE_PATH is correct."
         )
 
-    connection = sqlite3.connect(DATABASE_PATH)
+    # Belt-and-suspenders: the prefix check above validates the LLM's output,
+    # but doesn't stop it from being wrong. Opening the connection with
+    # mode=ro enforces read-only at the DB layer itself -- any write
+    # attempt fails regardless of what slips past the string check.
+    connection = sqlite3.connect(f"file:{DATABASE_PATH}?mode=ro", uri=True)
     cursor = connection.cursor()
 
     try:
