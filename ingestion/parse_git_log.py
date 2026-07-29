@@ -85,8 +85,11 @@ def build_commit_database(
         numstat_lines = lines[1:]
 
         # Parse commit fields
+        # maxsplit=4 caps this at exactly 5 parts -- without it, a commit
+        # message that happens to contain this control character would
+        # produce extra parts and crash the unpacking below.
         commit_hash, author, email, date, message = (
-            header.split(FIELD_SEPARATOR)
+            header.split(FIELD_SEPARATOR, maxsplit=4)
         )
 
         # Insert commit
