@@ -18,6 +18,7 @@ import streamlit as st
 from ingestion.clone_repo import clone_repository
 from ingestion.read_files import walk_repository
 from ingestion.parse_git_log import build_commit_database
+from ingestion.filters import is_non_english_doc
 from splitters.python_code_splitter import split_python_file
 from splitters.text_structure_splitter import split_markdown_file
 from vectorstore.build_index import build_index, load_index

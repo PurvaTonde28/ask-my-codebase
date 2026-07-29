@@ -3,23 +3,10 @@ import time
 
 from ingestion.clone_repo import clone_repository
 from ingestion.read_files import walk_repository
+from ingestion.filters import is_non_english_doc
 from splitters.python_code_splitter import split_python_file
 from splitters.text_structure_splitter import split_markdown_file
 from vectorstore.build_index import build_index, search
-
-
-def is_non_english_doc(path: Path) -> bool:
-    """fastapi's docs are structured as docs/<lang>/docs/... -- skip
-    translations, keep docs/en/... and anything not under docs/ at all
-    (like the root README)."""
-    parts = path.parts
-    if "docs" in parts:
-        idx = parts.index("docs")
-        if idx + 1 < len(parts):
-            candidate = parts[idx + 1]
-            if candidate != "en":
-                return True
-    return False
 
 
 repo_path = clone_repository("https://github.com/tiangolo/fastapi")
