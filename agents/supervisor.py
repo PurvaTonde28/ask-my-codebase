@@ -2,6 +2,7 @@ import time
 from typing import Literal
 
 from groq import BadRequestError as GroqBadRequestError
+from groq import RateLimitError as GroqRateLimitError
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field, ValidationError
@@ -80,8 +81,12 @@ Return only the RouteDecision object.
 """
 
 
+import os
+
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model=GROQ_MODEL,
     temperature=0,
 )
 
@@ -128,6 +133,15 @@ def supervisor_node(
             decision = structured_llm.invoke(messages)
 
             return decision
+
+        except GroqRateLimitError as e:
+            return RouteDecision(
+                destination="rag",
+                reasoning=(
+                    "Groq rate limit hit -- defaulting to the RAG agent "
+                    f"without a routing call. ({e})"
+                ),
+            )
 
         except (GroqBadRequestError, ValidationError) as e:
             last_error = e

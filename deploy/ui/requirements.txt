@@ -1,0 +1,17 @@
+# Trimmed from the main project requirements.txt -- only what
+# streamlit_app.py and the agents/ pipeline it wraps actually need.
+# Deliberately NOT listing streamlit itself: on Hugging Face's native
+# Streamlit SDK, HF installs streamlit based on the sdk_version field in
+# README.md's frontmatter -- also listing it here has caused version
+# conflicts for other people (confirmed via HF's own forums). No fastapi/
+# uvicorn (API-only), no rich (CLI-only).
+langchain>=0.3.0
+langgraph>=0.2.60
+langchain-groq>=0.2.0
+groq>=0.11.0
+pydantic>=2.9.0
+fastembed>=0.4.0
+faiss-cpu>=1.9.0
+numpy>=1.26.0
+python-dotenv>=1.0.1
+streamlit

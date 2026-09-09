@@ -1,0 +1,14 @@
+# Trimmed from the main project requirements.txt -- only what api.py and
+# the agents/ pipeline it wraps actually need. No streamlit (UI-only),
+# no rich (CLI-only).
+langchain>=0.3.0
+langgraph>=0.2.60
+langchain-groq>=0.2.0
+groq>=0.11.0
+pydantic>=2.9.0
+fastembed>=0.4.0
+faiss-cpu>=1.9.0
+numpy>=1.26.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-dotenv>=1.0.1

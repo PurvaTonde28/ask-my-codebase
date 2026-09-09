@@ -7,6 +7,7 @@ from langchain.tools import tool
 from langchain_core.messages import BaseMessage
 from langchain_groq import ChatGroq
 from groq import BadRequestError as GroqBadRequestError
+from groq import RateLimitError as GroqRateLimitError
 
 from agents.memory import trim_history
 
@@ -96,8 +97,12 @@ def run_sql_query(query: str) -> str:
         connection.close()
 
 
+import os
+
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model=GROQ_MODEL,
     temperature=0,
 )
 
@@ -132,6 +137,14 @@ def sql_node(messages: list[BaseMessage], max_retries: int = 2) -> str:
         try:
             response = sql_agent.invoke({"messages": trimmed_messages})
             return response["messages"][-1].content
+
+        except GroqRateLimitError as e:
+            return (
+                f"The {SQL} agent hit Groq's free-tier rate limit "
+                "(this happens with long conversations or big search results). "
+                "Try again in a minute, or start a fresh conversation. "
+                f"(details: {e})"
+            )
 
         except GroqBadRequestError as e:
             last_error = e

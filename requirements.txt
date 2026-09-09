@@ -1,0 +1,23 @@
+# Core LLM / agent orchestration
+langchain==1.4.0
+langchain-core==1.6.2
+langchain-groq==1.1.3
+langgraph==1.2.11
+groq==0.37.1
+
+# Validation
+pydantic==2.13.5
+
+# Vector search + embeddings (RAG)
+faiss-cpu==1.15.0
+fastembed==0.8.0
+numpy
+
+# UI
+streamlit==1.63.0
+
+# CLI (app.py)
+rich==15.0.0
+
+# Config
+python-dotenv==1.2.3
