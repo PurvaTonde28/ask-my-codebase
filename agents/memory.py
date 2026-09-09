@@ -9,7 +9,7 @@ from langchain_core.messages import BaseMessage
 # Groq on every question -- older turns are just not sent to the LLM
 # anymore, they are NOT deleted from the checkpointed conversation, so the
 # UI can still display the full history.
-MAX_HISTORY_MESSAGES = 8
+MAX_HISTORY_MESSAGES = 6  # lowered to leave headroom under the free-tier 8K ITPM cap
 
 
 def trim_history(messages: list[BaseMessage]) -> list[BaseMessage]:

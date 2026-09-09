@@ -138,7 +138,7 @@ with st.sidebar:
     st.subheader("Repository")
     repo_url = st.text_input(
         "GitHub URL",
-        value="https://github.com/PurvaTonde28/rag-eval-pipeline",
+        value="https://github.com/PurvaTonde28/procure-sense",
         help="Any public GitHub repo. Already-processed repos load instantly on repeat runs.",
     )
     process_clicked = st.button("Process repository", type="primary")

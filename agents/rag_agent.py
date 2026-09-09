@@ -3,6 +3,7 @@ from langchain.tools import tool
 from langchain_core.messages import BaseMessage
 from langchain_groq import ChatGroq
 from groq import BadRequestError as GroqBadRequestError
+from groq import RateLimitError as GroqRateLimitError
 import time
 
 from agents.memory import trim_history
@@ -37,10 +38,13 @@ Rules:
 """
 
 
+MAX_CHUNK_CHARS_IN_PROMPT = 900  # keeps k=3 well under the free-tier ITPM cap
+
+
 @tool
 def search_codebase(
     query: str,
-    k: int = 5,
+    k: int = 3,
 ) -> str:
     """
     Search the indexed codebase using semantic search.
@@ -61,19 +65,27 @@ def search_codebase(
     formatted_results = []
 
     for chunk in results:
+        content = chunk["content"]
+        if len(content) > MAX_CHUNK_CHARS_IN_PROMPT:
+            content = content[:MAX_CHUNK_CHARS_IN_PROMPT] + "\n... (truncated)"
+
         formatted_results.append(
             f"""File: {chunk['file_path']}
 Lines: {chunk['start_line']}-{chunk['end_line']}
 
-{chunk['content']}
+{content}
 """
         )
 
     return "\n\n".join(formatted_results)
 
 
+import os
+
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model=GROQ_MODEL,
     temperature=0,
 )
 
@@ -108,6 +120,14 @@ def rag_node(messages: list[BaseMessage], max_retries: int = 2) -> str:
         try:
             response = rag_agent.invoke({"messages": trimmed_messages})
             return response["messages"][-1].content
+
+        except GroqRateLimitError as e:
+            return (
+                f"The {RAG} agent hit Groq's free-tier rate limit "
+                "(this happens with long conversations or big search results). "
+                "Try again in a minute, or start a fresh conversation. "
+                f"(details: {e})"
+            )
 
         except GroqBadRequestError as e:
             last_error = e
